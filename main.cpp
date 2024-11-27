@@ -1440,6 +1440,16 @@ __global__ void buildBVHNodes(BVHNode* nodes, TriangleInfo* triInfo, Triangle* t
 }
 
 
+__global__ void computeExtents(TriangleInfo* triInfo, int numTriangles, float* minExtents, float* maxExtents) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < numTriangles) {
+        for (int axis = 0; axis < 3; ++axis) {
+            atomicMin(&minExtents[axis], triInfo[idx].centroid[axis]);
+            atomicMax(&maxExtents[axis], triInfo[idx].centroid[axis]);
+        }
+    }
+}
+
 void buildBVH_GPU_Parallel(Triangle* d_triangles, BVHNode* d_nodes, int numTriangles) {
 
 
@@ -1466,6 +1476,62 @@ void buildBVH_GPU_Parallel(Triangle* d_triangles, BVHNode* d_nodes, int numTrian
 
     hipFree(d_triInfo);
 }
+
+void buildBVH_GPU_Parallel_Best_Axis(Triangle* d_triangles, BVHNode* d_nodes, int numTriangles) {
+    std::cout << "[INFO]: buildBVH_GPU_Parallel\n";
+
+    int totalNodes = 2 * numTriangles - 1;
+    int blockSize = 512;
+    int numBlocks = (numTriangles + blockSize - 1) / blockSize;
+
+    TriangleInfo* d_triInfo;
+    hipMalloc(&d_triInfo, numTriangles * sizeof(TriangleInfo));
+    hipLaunchKernelGGL(initTriangleInfo, dim3(numBlocks), dim3(blockSize), 0, 0, d_triangles, d_triInfo, numTriangles);
+
+    // Compute extents
+    float* d_minExtents, *d_maxExtents;
+    hipMalloc(&d_minExtents, 3 * sizeof(float));
+    hipMalloc(&d_maxExtents, 3 * sizeof(float));
+    
+    // Initialize extents
+    float initMin = std::numeric_limits<float>::max();
+    float initMax = std::numeric_limits<float>::lowest();
+    hipMemset(d_minExtents, *reinterpret_cast<int*>(&initMin), 3 * sizeof(float));
+    hipMemset(d_maxExtents, *reinterpret_cast<int*>(&initMax), 3 * sizeof(float));
+
+    hipLaunchKernelGGL(computeExtents, dim3(numBlocks), dim3(blockSize), 0, 0, d_triInfo, numTriangles, d_minExtents, d_maxExtents);
+
+    // Copy extents back to host
+    float h_minExtents[3], h_maxExtents[3];
+    hipMemcpy(h_minExtents, d_minExtents, 3 * sizeof(float), hipMemcpyDeviceToHost);
+    hipMemcpy(h_maxExtents, d_maxExtents, 3 * sizeof(float), hipMemcpyDeviceToHost);
+
+    // Find axis with largest extent
+    int bestAxis = 0;
+    float maxExtent = h_maxExtents[0] - h_minExtents[0];
+    for (int axis = 1; axis < 3; ++axis) {
+        float extent = h_maxExtents[axis] - h_minExtents[axis];
+        if (extent > maxExtent) {
+            maxExtent = extent;
+            bestAxis = axis;
+        }
+    }
+
+    // Sort using the best axis
+    for (int k = 2; k <= numTriangles; k *= 2) {
+        for (int j = k / 2; j > 0; j /= 2) {
+            hipLaunchKernelGGL(bitonicSort, dim3(numBlocks), dim3(blockSize), 0, 0, d_triInfo, j, k, numTriangles, bestAxis);
+        }
+    }
+
+    numBlocks = (totalNodes + blockSize - 1) / blockSize;
+    hipLaunchKernelGGL(buildBVHNodes, dim3(numBlocks), dim3(blockSize), 0, 0, d_nodes, d_triInfo, d_triangles, numTriangles);
+
+    hipFree(d_triInfo);
+    hipFree(d_minExtents);
+    hipFree(d_maxExtents);
+}
+
 
 
 // END::GPU 3
@@ -1590,6 +1656,7 @@ void Test001(int mode)
         if (mode==2) buildBVH_GPU_Version2(deviceTriangles, devicebvhNodes, numTriangles);
         if (mode==3) buildBVH_GPU_Version3(deviceTriangles, devicebvhNodes, numTriangles);
         if (mode==4) buildBVH_GPU_Parallel(deviceTriangles, devicebvhNodes, numTriangles);
+		if (mode==5) buildBVH_GPU_Parallel_Best_Axis(deviceTriangles, devicebvhNodes, numTriangles);
         t_end_0 = std::chrono::steady_clock::now();
 
         //hipMemcpy(nodes, d_nodes, (2 * numTriangles - 1) * sizeof(BVHNode), hipMemcpyDeviceToHost);
@@ -1761,6 +1828,7 @@ void Test002(int mode)
         if (mode==2) buildBVH_GPU_Version2(deviceTriangles, devicebvhNodes, numTriangles);
         if (mode==3) buildBVH_GPU_Version3(deviceTriangles, devicebvhNodes, numTriangles);
         if (mode==4) buildBVH_GPU_Parallel(deviceTriangles, devicebvhNodes, numTriangles);
+		if (mode==5) buildBVH_GPU_Parallel(deviceTriangles, devicebvhNodes, numTriangles);
         t_end_0 = std::chrono::steady_clock::now();
 
         //hipMemcpy(nodes, d_nodes, (2 * numTriangles - 1) * sizeof(BVHNode), hipMemcpyDeviceToHost);
@@ -1877,19 +1945,22 @@ int main() {
 	
 	if (1==1)
 	{
-		std::cout << "[INFO]: Test 0\n"; Test001(0);
-		std::cout << "[INFO]: Test 2\n"; Test001(2);
-		std::cout << "[INFO]: Test 3\n"; Test001(3);
-		std::cout << "[INFO]: Test 4\n"; Test001(4);
+		std::cout << "\n [INFO]: Test 0\n"; Test001(0);
+		std::cout << "\n [INFO]: Test 2\n"; Test001(2);
+		std::cout << "\n [INFO]: Test 3\n"; Test001(3);
+		std::cout << "\n [INFO]: Test 4\n"; Test001(4);
+		std::cout << "\n [INFO]: Test 5\n"; Test001(5);
 	}
 	
 	
     std::cout << "********************************************************\n"; 
 
-	std::cout << "[INFO]: Test 0\n"; Test002(0);
-    std::cout << "[INFO]: Test 2\n"; Test002(2);
-    std::cout << "[INFO]: Test 3\n"; Test002(3);
-    std::cout << "[INFO]: Test 4\n"; Test002(4);
+	std::cout << "\n [INFO]: Test 0\n"; Test002(0);
+    std::cout << "\n [INFO]: Test 2\n"; Test002(2);
+    std::cout << "\n [INFO]: Test 3\n"; Test002(3);
+    std::cout << "\n [INFO]: Test 4\n"; Test002(4);
+
+	std::cout << "\n[INFO]: Test 5\n"; Test002(5);
 
     return 0;
 }
