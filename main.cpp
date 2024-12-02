@@ -1975,6 +1975,7 @@ void Test002(int mode) {
                        deviceIntersectionPoint, deviceIdResults);
   }
 
+
   t_end_1 = std::chrono::steady_clock::now();
 
   std::vector<int> hosthitTriangles(rays.size());
