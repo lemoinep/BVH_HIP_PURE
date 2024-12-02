@@ -1,9 +1,11 @@
 
-#pragma GCC diagnostic warning "-Wunused-result"
+//#pragma GCC diagnostic warning "-Wunused-result"
+//#pragma clang diagnostic ignored "-Wunused-result"
+
+//#pragma GCC diagnostic warning "-Wunknown-attributes"
+#pragma clang diagnostic ignored "-Wunknown-attributes"
 #pragma clang diagnostic ignored "-Wunused-result"
 
-#pragma GCC diagnostic warning "-Wunknown-attributes"
-#pragma clang diagnostic ignored "-Wunknown-attributes"
 
 #include <algorithm>
 #include <assert.h>
@@ -59,15 +61,25 @@
 // NOTA: The goal is to create a BVH algorithm using the features of hip without
 // using rocThrust and see the performance depending on the case.
 
-#define HIP_CHECK(call)                                                        \
-  do {                                                                         \
-    hipError_t error = call;                                                   \
-    if (error != hipSuccess) {                                                 \
-      fprintf(stderr, "HIP error in %s at line %d: %s\n", __FILE__, __LINE__,  \
-              hipGetErrorString(error));                                       \
-      exit(EXIT_FAILURE);                                                      \
-    }                                                                          \
-  } while (0)
+
+
+#define HIP_CHECK( command )                                                                \
+    {                                                                                       \
+        hipError_t status = command;                                                        \
+        if ( status != hipSuccess )                                                         \
+        {                                                                                   \
+            std::cerr << "Error: HIP reports " << hipGetErrorString( status ) << std::endl; \
+            std::abort();                                                                   \
+        }                                                                                   \
+    }
+
+// Conditional assertion based on debug mode for HIP operations
+#ifdef NDEBUG
+#define HIP_ASSERT( x ) x // No assertion in release mode
+#else
+#define HIP_ASSERT( x ) ( assert( ( x ) == hipSuccess ) ) // Assert in debug mode
+#endif
+
 
 struct Vec3 {
   float x, y, z;
@@ -1270,8 +1282,8 @@ void buildBVH_GPU_Version1(Triangle *d_triangles, BVHNode *d_nodes,
 
   // Verification 2
   BVHNode *h_nodes = new BVHNode[2 * numTriangles - 1];
-  hipMemcpy(h_nodes, d_nodes, (2 * numTriangles - 1) * sizeof(BVHNode),
-            hipMemcpyDeviceToHost);
+  HIP_ASSERT(hipMemcpy(h_nodes, d_nodes, (2 * numTriangles - 1) * sizeof(BVHNode),
+            hipMemcpyDeviceToHost));
   verifyBVH(h_nodes, 2 * numTriangles - 1);
   delete[] h_nodes;
 }
@@ -1312,8 +1324,8 @@ void buildBVH_GPU_Version2(Triangle *d_triangles, BVHNode *d_nodes,
                      d_triangles, d_nodes, numTriangles);
 
   BVHNode *h_nodes = new BVHNode[2 * numTriangles - 1];
-  hipMemcpy(h_nodes, d_nodes, (2 * numTriangles - 1) * sizeof(BVHNode),
-            hipMemcpyDeviceToHost);
+  HIP_ASSERT(hipMemcpy(h_nodes, d_nodes, (2 * numTriangles - 1) * sizeof(BVHNode),
+            hipMemcpyDeviceToHost));
 
   for (int i = numTriangles - 2; i >= 0; --i) {
     BVHNode &node = h_nodes[i];
@@ -1328,8 +1340,8 @@ void buildBVH_GPU_Version2(Triangle *d_triangles, BVHNode *d_nodes,
     node.bounds.min = min(leftNode.bounds.min, rightNode.bounds.min);
     node.bounds.max = max(leftNode.bounds.max, rightNode.bounds.max);
   }
-  hipMemcpy(d_nodes, h_nodes, (2 * numTriangles - 1) * sizeof(BVHNode),
-            hipMemcpyHostToDevice);
+  HIP_ASSERT(hipMemcpy(d_nodes, h_nodes, (2 * numTriangles - 1) * sizeof(BVHNode),
+            hipMemcpyHostToDevice));
   delete[] h_nodes;
 }
 
@@ -1526,7 +1538,7 @@ void buildBVH_GPU_Parallel(Triangle *d_triangles, BVHNode *d_nodes,
   int numBlocks = (numTriangles + blockSize - 1) / blockSize;
 
   TriangleInfo *d_triInfo;
-  hipMalloc(&d_triInfo, numTriangles * sizeof(TriangleInfo));
+  HIP_ASSERT( hipMalloc(&d_triInfo, numTriangles * sizeof(TriangleInfo)));
   hipLaunchKernelGGL(initTriangleInfo, dim3(numBlocks), dim3(blockSize), 0, 0,
                      d_triangles, d_triInfo, numTriangles);
 
@@ -1554,32 +1566,32 @@ void buildBVH_GPU_Parallel_Best_Axis(Triangle *d_triangles, BVHNode *d_nodes,
   int numBlocks = (numTriangles + blockSize - 1) / blockSize;
 
   TriangleInfo *d_triInfo;
-  hipMalloc(&d_triInfo, numTriangles * sizeof(TriangleInfo));
+  HIP_ASSERT( hipMalloc(&d_triInfo, numTriangles * sizeof(TriangleInfo)));
   hipLaunchKernelGGL(initTriangleInfo, dim3(numBlocks), dim3(blockSize), 0, 0,
                      d_triangles, d_triInfo, numTriangles);
 
   // Compute extents
   float *d_minExtents, *d_maxExtents;
-  hipMalloc(&d_minExtents, 3 * sizeof(float));
-  hipMalloc(&d_maxExtents, 3 * sizeof(float));
+  HIP_ASSERT( hipMalloc(&d_minExtents, 3 * sizeof(float)));
+  HIP_ASSERT( hipMalloc(&d_maxExtents, 3 * sizeof(float)));
 
   // Initialize extents
   float initMin = std::numeric_limits<float>::max();
   float initMax = std::numeric_limits<float>::lowest();
-  hipMemset(d_minExtents, *reinterpret_cast<int *>(&initMin),
-            3 * sizeof(float));
-  hipMemset(d_maxExtents, *reinterpret_cast<int *>(&initMax),
-            3 * sizeof(float));
+  HIP_ASSERT(hipMemset(d_minExtents, *reinterpret_cast<int *>(&initMin),
+            3 * sizeof(float)));
+  HIP_ASSERT(hipMemset(d_maxExtents, *reinterpret_cast<int *>(&initMax),
+            3 * sizeof(float)));
 
   hipLaunchKernelGGL(computeExtents, dim3(numBlocks), dim3(blockSize), 0, 0,
                      d_triInfo, numTriangles, d_minExtents, d_maxExtents);
 
   // Copy extents back to host
   float h_minExtents[3], h_maxExtents[3];
-  hipMemcpy(h_minExtents, d_minExtents, 3 * sizeof(float),
-            hipMemcpyDeviceToHost);
-  hipMemcpy(h_maxExtents, d_maxExtents, 3 * sizeof(float),
-            hipMemcpyDeviceToHost);
+  HIP_ASSERT(hipMemcpy(h_minExtents, d_minExtents, 3 * sizeof(float),
+            hipMemcpyDeviceToHost));
+  HIP_ASSERT(hipMemcpy(h_maxExtents, d_maxExtents, 3 * sizeof(float),
+            hipMemcpyDeviceToHost));
 
   // Find axis with largest extent
   int bestAxis = 0;
@@ -1688,7 +1700,7 @@ void Test001(int mode) {
 
   Vec3 cameraOrigin(0.75, 0.75, 3.0);
   float fov = 60.0f;
-  int imageWidth = 10;
+  int imageWidth = 20;
   int imageHeight = imageWidth;
   int numRays = imageWidth * imageHeight;
   generateRays(rays, numRays, cameraOrigin, fov, imageWidth, imageHeight);
@@ -1701,9 +1713,9 @@ void Test001(int mode) {
   float *deviceDistanceResults;
   int *deviceIdResults;
 
-  hipMalloc(&deviceTriangles, triangles.size() * sizeof(Triangle));
-  hipMemcpy(deviceTriangles, triangles.data(),
-            triangles.size() * sizeof(Triangle), hipMemcpyHostToDevice);
+  HIP_ASSERT( hipMalloc(&deviceTriangles, triangles.size() * sizeof(Triangle)));
+  HIP_ASSERT(hipMemcpy(deviceTriangles, triangles.data(),
+            triangles.size() * sizeof(Triangle), hipMemcpyHostToDevice));
 
   bool isUnifiedMemory = false;
   bool isGPU = false;
@@ -1719,14 +1731,14 @@ void Test001(int mode) {
     t_end_0 = std::chrono::steady_clock::now();
     if (1 == 0)
       writeBVHNodes(bvhNodes);
-    hipMalloc(&devicebvhNodes, bvhNodes.size() * sizeof(BVHNode));
-    hipMemcpy(devicebvhNodes, bvhNodes.data(),
-              bvhNodes.size() * sizeof(BVHNode), hipMemcpyHostToDevice);
+    HIP_ASSERT( hipMalloc(&devicebvhNodes, bvhNodes.size() * sizeof(BVHNode)));
+    HIP_ASSERT(hipMemcpy(devicebvhNodes, bvhNodes.data(),
+              bvhNodes.size() * sizeof(BVHNode), hipMemcpyHostToDevice));
   }
 
   if (isGPU) {
     int numTriangles = triangles.size();
-    hipMalloc(&devicebvhNodes, (2 * numTriangles - 1) * sizeof(BVHNode));
+    HIP_ASSERT( hipMalloc(&devicebvhNodes, (2 * numTriangles - 1) * sizeof(BVHNode)));
     t_begin_0 = std::chrono::steady_clock::now();
     // buildBVH_GPU_Version1(deviceTriangles, devicebvhNodes, numTriangles);
     if (mode == 2)
@@ -1763,14 +1775,14 @@ void Test001(int mode) {
   }
 
   std::cout << "[Ray Tracing]\n";
-  hipMalloc(&deviceRays, rays.size() * sizeof(Ray));
-  hipMemcpy(deviceRays, rays.data(), rays.size() * sizeof(Ray),
-            hipMemcpyHostToDevice);
+  HIP_ASSERT( hipMalloc(&deviceRays, rays.size() * sizeof(Ray)));
+  HIP_ASSERT(hipMemcpy(deviceRays, rays.data(), rays.size() * sizeof(Ray),
+            hipMemcpyHostToDevice));
 
-  hipMalloc(&deviceHitTriangles, rays.size() * sizeof(int));
-  hipMalloc(&deviceIntersectionPoint, rays.size() * sizeof(Vec3));
-  hipMalloc(&deviceDistanceResults, rays.size() * sizeof(float));
-  hipMalloc(&deviceIdResults, rays.size() * sizeof(int));
+  HIP_ASSERT( hipMalloc(&deviceHitTriangles, rays.size() * sizeof(int)));
+  HIP_ASSERT( hipMalloc(&deviceIntersectionPoint, rays.size() * sizeof(Vec3)));
+  HIP_ASSERT( hipMalloc(&deviceDistanceResults, rays.size() * sizeof(float)));
+  HIP_ASSERT( hipMalloc(&deviceIdResults, rays.size() * sizeof(int)));
 
   t_begin_1 = std::chrono::steady_clock::now();
   int blockSize = 256;
@@ -1798,20 +1810,20 @@ void Test001(int mode) {
   t_end_1 = std::chrono::steady_clock::now();
 
   std::vector<int> hosthitTriangles(rays.size());
-  hipMemcpy(hosthitTriangles.data(), deviceHitTriangles,
-            rays.size() * sizeof(int), hipMemcpyDeviceToHost);
+  HIP_ASSERT(hipMemcpy(hosthitTriangles.data(), deviceHitTriangles,
+            rays.size() * sizeof(int), hipMemcpyDeviceToHost));
 
   std::vector<Vec3> hostHipIntersectionPoint(rays.size());
-  hipMemcpy(hostHipIntersectionPoint.data(), deviceIntersectionPoint,
-            rays.size() * sizeof(Vec3), hipMemcpyDeviceToHost);
+  HIP_ASSERT(hipMemcpy(hostHipIntersectionPoint.data(), deviceIntersectionPoint,
+            rays.size() * sizeof(Vec3), hipMemcpyDeviceToHost));
 
   std::vector<float> hostHipDistanceResults(rays.size());
-  hipMemcpy(hostHipDistanceResults.data(), deviceDistanceResults,
-            rays.size() * sizeof(float), hipMemcpyDeviceToHost);
+  HIP_ASSERT(hipMemcpy(hostHipDistanceResults.data(), deviceDistanceResults,
+            rays.size() * sizeof(float), hipMemcpyDeviceToHost));
 
   std::vector<int> hostHipIdResults(rays.size());
-  hipMemcpy(hostHipIdResults.data(), deviceIdResults, rays.size() * sizeof(int),
-            hipMemcpyDeviceToHost);
+  HIP_ASSERT(hipMemcpy(hostHipIdResults.data(), deviceIdResults, rays.size() * sizeof(int),
+            hipMemcpyDeviceToHost));
 
   for (int i = 0; i < rays.size(); ++i) {
     if (hostHipIdResults[i] != -1) {
@@ -1878,9 +1890,9 @@ void Test002(int mode) {
   float *deviceDistanceResults;
   int *deviceIdResults;
 
-  hipMalloc(&deviceTriangles, triangles.size() * sizeof(Triangle));
-  hipMemcpy(deviceTriangles, triangles.data(),
-            triangles.size() * sizeof(Triangle), hipMemcpyHostToDevice);
+  HIP_ASSERT( hipMalloc(&deviceTriangles, triangles.size() * sizeof(Triangle)));
+  HIP_ASSERT(hipMemcpy(deviceTriangles, triangles.data(),
+            triangles.size() * sizeof(Triangle), hipMemcpyHostToDevice));
 
   bool isUnifiedMemory = false;
   bool isGPU = false;
@@ -1896,14 +1908,14 @@ void Test002(int mode) {
     t_end_0 = std::chrono::steady_clock::now();
     if (1 == 0)
       writeBVHNodes(bvhNodes);
-    hipMalloc(&devicebvhNodes, bvhNodes.size() * sizeof(BVHNode));
-    hipMemcpy(devicebvhNodes, bvhNodes.data(),
-              bvhNodes.size() * sizeof(BVHNode), hipMemcpyHostToDevice);
+    HIP_ASSERT( hipMalloc(&devicebvhNodes, bvhNodes.size() * sizeof(BVHNode)));
+    HIP_ASSERT(hipMemcpy(devicebvhNodes, bvhNodes.data(),
+              bvhNodes.size() * sizeof(BVHNode), hipMemcpyHostToDevice));
   }
 
   if (isGPU) {
     int numTriangles = triangles.size();
-    hipMalloc(&devicebvhNodes, (2 * numTriangles - 1) * sizeof(BVHNode));
+    HIP_ASSERT( hipMalloc(&devicebvhNodes, (2 * numTriangles - 1) * sizeof(BVHNode)));
     t_begin_0 = std::chrono::steady_clock::now();
     // buildBVH_GPU_Version1(deviceTriangles, devicebvhNodes, numTriangles);
     if (mode == 2)
@@ -1943,14 +1955,14 @@ void Test002(int mode) {
   }
 
   std::cout << "[Ray Tracing]\n";
-  hipMalloc(&deviceRays, rays.size() * sizeof(Ray));
-  hipMemcpy(deviceRays, rays.data(), rays.size() * sizeof(Ray),
-            hipMemcpyHostToDevice);
+  HIP_ASSERT( hipMalloc(&deviceRays, rays.size() * sizeof(Ray)));
+  HIP_ASSERT(hipMemcpy(deviceRays, rays.data(), rays.size() * sizeof(Ray),
+            hipMemcpyHostToDevice));
 
-  hipMalloc(&deviceHitTriangles, rays.size() * sizeof(int));
-  hipMalloc(&deviceIntersectionPoint, rays.size() * sizeof(Vec3));
-  hipMalloc(&deviceDistanceResults, rays.size() * sizeof(float));
-  hipMalloc(&deviceIdResults, rays.size() * sizeof(int));
+  HIP_ASSERT( hipMalloc(&deviceHitTriangles, rays.size() * sizeof(int)));
+  HIP_ASSERT( hipMalloc(&deviceIntersectionPoint, rays.size() * sizeof(Vec3)));
+  HIP_ASSERT( hipMalloc(&deviceDistanceResults, rays.size() * sizeof(float)));
+  HIP_ASSERT( hipMalloc(&deviceIdResults, rays.size() * sizeof(int)));
 
   t_begin_1 = std::chrono::steady_clock::now();
   int blockSize = 512;
@@ -1979,20 +1991,20 @@ void Test002(int mode) {
   t_end_1 = std::chrono::steady_clock::now();
 
   std::vector<int> hosthitTriangles(rays.size());
-  hipMemcpy(hosthitTriangles.data(), deviceHitTriangles,
-            rays.size() * sizeof(int), hipMemcpyDeviceToHost);
+  HIP_ASSERT(hipMemcpy(hosthitTriangles.data(), deviceHitTriangles,
+            rays.size() * sizeof(int), hipMemcpyDeviceToHost));
 
   std::vector<Vec3> hostHipIntersectionPoint(rays.size());
-  hipMemcpy(hostHipIntersectionPoint.data(), deviceIntersectionPoint,
-            rays.size() * sizeof(Vec3), hipMemcpyDeviceToHost);
+  HIP_ASSERT(hipMemcpy(hostHipIntersectionPoint.data(), deviceIntersectionPoint,
+            rays.size() * sizeof(Vec3), hipMemcpyDeviceToHost));
 
   std::vector<float> hostHipDistanceResults(rays.size());
-  hipMemcpy(hostHipDistanceResults.data(), deviceDistanceResults,
-            rays.size() * sizeof(float), hipMemcpyDeviceToHost);
+  HIP_ASSERT(hipMemcpy(hostHipDistanceResults.data(), deviceDistanceResults,
+            rays.size() * sizeof(float), hipMemcpyDeviceToHost));
 
   std::vector<int> hostHipIdResults(rays.size());
-  hipMemcpy(hostHipIdResults.data(), deviceIdResults, rays.size() * sizeof(int),
-            hipMemcpyDeviceToHost);
+  HIP_ASSERT(hipMemcpy(hostHipIdResults.data(), deviceIdResults, rays.size() * sizeof(int),
+            hipMemcpyDeviceToHost));
 
   for (int i = 0; i < rays.size(); ++i) {
     if (hostHipIdResults[i] != -1) {
