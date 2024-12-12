@@ -410,6 +410,43 @@ __device__ __inline__ bool rayTriangleIntersect(const Ray &ray,
   return false;
 }
 
+
+
+
+
+__device__ __inline__ bool pointInTriangle(const Vec3 &point, const Triangle &triangle /*, Vec3 &intersectionPoint*/) {
+    Vec3 v0 = triangle.v2 - triangle.v0;
+    Vec3 v1 = triangle.v1 - triangle.v0;
+    Vec3 v2 = point - triangle.v0;
+
+    float dot00 = dot(v0, v0);
+    float dot01 = dot(v0, v1);
+    float dot02 = dot(v0, v2);
+    float dot11 = dot(v1, v1);
+    float dot12 = dot(v1, v2);
+
+    float invDenom = 1.0f / (dot00 * dot11 - dot01 * dot01);
+    float u = (dot11 * dot02 - dot01 * dot12) * invDenom;
+    float v = (dot00 * dot12 - dot01 * dot02) * invDenom;
+
+    bool isInside = (u >= 0) && (v >= 0) && (u + v <= 1);
+
+/*
+    if (isInside) {
+        // Calculer le point d'intersection en utilisant les coordonnées barycentriques
+        float w = 1.0f - u - v;
+        intersectionPoint.x = w * triangle.v0.x + u * triangle.v1.x + v * triangle.v2.x;
+        intersectionPoint.y = w * triangle.v0.y + u * triangle.v1.y + v * triangle.v2.y;
+        intersectionPoint.z = w * triangle.v0.z + u * triangle.v1.z + v * triangle.v2.z;
+    }
+  */
+
+    return isInside;
+}
+
+
+
+
 __device__ __inline__ bool rayTriangleIntersect4(const Ray &ray,
                                                  const Triangle &tri, float &t,
                                                  Vec3 &intersectionPoint) {
@@ -750,24 +787,29 @@ __global__ void raytraceKernel(Ray *rays, int numRays, BVHNode *bvhNodes,
     if (!rayAABBIntersect(ray, node.bounds))
       continue;
 
+    
+
     if (node.triangleCount > 0) {
       for (int i = 0; i < node.triangleCount; ++i) {
         Triangle &tri = triangles[node.firstTriangleIndex + i];
 
         // if (isView) printf("*Num Ray[%i]\n",node.firstTriangleIndex + i);
 
-        float t;
-        if (rayTriangleIntersect4(ray, tri, t, intersectionPointT)) {
+        if (pointInTriangle(ray.origin,tri)) //test 2
+        {
+          float t;
+          if (rayTriangleIntersect4(ray, tri, t, intersectionPointT)) {
 
-          if (isView)
-            printf("      Num Ray[%i] <%f %f %f> d=%f\n", idx,
-                   intersectionPointT.x, intersectionPointT.y,
-                   intersectionPointT.z, t);
-          if (t < closestT) {
-            closestT = t;
-            closestTriangle = node.firstTriangleIndex + i;
-            closestIntersectionPoint = intersectionPointT;
-            closesIntersectionId = triangles[closestTriangle].id;
+            if (isView)
+              printf("      Num Ray[%i] <%f %f %f> d=%f\n", idx,
+                    intersectionPointT.x, intersectionPointT.y,
+                    intersectionPointT.z, t);
+            if (t < closestT) {
+              closestT = t;
+              closestTriangle = node.firstTriangleIndex + i;
+              closestIntersectionPoint = intersectionPointT;
+              closesIntersectionId = triangles[closestTriangle].id;
+            }
           }
         }
       }
@@ -978,8 +1020,13 @@ raytraceKernel_Parallel005(Ray *rays, int numRays, BVHNode *bvhNodes,
         node.triangleIndex < numTriangles) {
       if (!rayAABBIntersect4(ray, node.bounds)) // add test 1
         continue;
+
+      
       Triangle &tri = triangles[node.triangleIndex];
-      // if (sameDirectionTest(tri, ray, angleLim)) //add test 2
+      if (! pointInTriangle(ray.origin,tri)) //add test2
+        continue;
+
+      // if (sameDirectionTest(tri, ray, angleLim)) //add test 3
       {
         float t;
         Vec3 intersectionPointT;
@@ -1544,16 +1591,20 @@ __global__ void raytraceKernel4(Ray *rays, int numRays, BVHNode *bvhNodes,
     if (node.triangleCount > 0) {
       for (int i = 0; i < node.triangleCount; ++i) {
         Triangle &tri = triangles[node.triangleIndex + i];
-        float t;
-        Vec3 intersectionPointT;
 
-        if (rayTriangleIntersect4(ray, tri, t, intersectionPointT)) {
-          // printf("BING\n");
-          if (t < closestT) {
-            closestT = t;
-            closestTriangle = node.triangleIndex + i;
-            closestIntersectionPoint = intersectionPointT;
-            closestIntersectionId = tri.id;
+        //if (pointInTriangle(ray.origin,tri)) // not ok.
+        {
+          float t;
+          Vec3 intersectionPointT;
+
+          if (rayTriangleIntersect4(ray, tri, t, intersectionPointT)) {
+            // printf("BING\n");
+            if (t < closestT) {
+              closestT = t;
+              closestTriangle = node.triangleIndex + i;
+              closestIntersectionPoint = intersectionPointT;
+              closestIntersectionId = tri.id;
+            }
           }
         }
       }
@@ -2032,7 +2083,6 @@ void Test001(int mode) {
       buildBVH_GPU_Version3(deviceTriangles, devicebvhNodes, numTriangles);
     if (mode == 44)
       buildBVH_GPU_Version4(deviceTriangles, devicebvhNodes, numTriangles);
-
     if (mode == 5)
       buildBVH_GPU_Parallel_Best_Axis(deviceTriangles, devicebvhNodes,
                                       numTriangles);
