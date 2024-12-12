@@ -757,7 +757,7 @@ __global__ void raytraceKernel(Ray *rays, int numRays, BVHNode *bvhNodes,
         // if (isView) printf("*Num Ray[%i]\n",node.firstTriangleIndex + i);
 
         float t;
-        if (rayTriangleIntersect(ray, tri, t, intersectionPointT)) {
+        if (rayTriangleIntersect4(ray, tri, t, intersectionPointT)) {
 
           if (isView)
             printf("      Num Ray[%i] <%f %f %f> d=%f\n", idx,
@@ -2120,7 +2120,7 @@ void Test001(int mode) {
       std::cout << " IntersectionPoint= <" << hostHipIntersectionPoint[i].x
                 << "," << hostHipIntersectionPoint[i].y << ","
                 << hostHipIntersectionPoint[i].z << "> ";
-      std::cout << " IdObject= " << hostHipIdResults[i] << "\n";
+      std::cout <<"\n";
     }
   }
 
@@ -2240,7 +2240,6 @@ void Test002(int mode) {
       buildBVH_GPU_Version3(deviceTriangles, devicebvhNodes, numTriangles);
     if (mode == 44)
       buildBVH_GPU_Version4(deviceTriangles, devicebvhNodes, numTriangles);
-
     if (mode == 5)
       buildBVH_GPU_Parallel_Best_Axis(deviceTriangles, devicebvhNodes,
                                       numTriangles);
@@ -2363,7 +2362,7 @@ void Test002(int mode) {
 
 int main() {
 
-  if (1 == 0) {
+  if (1 == 1) {
     std::cout << "\n [INFO]: Test 0\n";
     Test001(0);
     std::cout << "\n [INFO]: Test 2\n";
@@ -2372,6 +2371,8 @@ int main() {
     Test001(3);
     std::cout << "\n [INFO]: Test 5\n";
     Test001(5);
+    std::cout << "\n [INFO]: Test 44\n";
+    Test001(44);
   }
 
   if (1 == 1) {
