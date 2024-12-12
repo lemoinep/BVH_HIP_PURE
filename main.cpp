@@ -6,7 +6,6 @@
 #pragma clang diagnostic ignored "-Wunknown-attributes"
 #pragma clang diagnostic ignored "-Wunused-result"
 
-
 #include <algorithm>
 #include <assert.h>
 #include <cfloat>
@@ -61,80 +60,81 @@
 // NOTA: The goal is to create a BVH algorithm using the features of hip without
 // using rocThrust and see the performance depending on the case.
 
-
-
-#define HIP_CHECK( command )                                                                \
-    {                                                                                       \
-        hipError_t status = command;                                                        \
-        if ( status != hipSuccess )                                                         \
-        {                                                                                   \
-            std::cerr << "Error: HIP reports " << hipGetErrorString( status ) << std::endl; \
-            std::abort();                                                                   \
-        }                                                                                   \
-    }
+#define HIP_CHECK(command)                                                     \
+  {                                                                            \
+    hipError_t status = command;                                               \
+    if (status != hipSuccess) {                                                \
+      std::cerr << "Error: HIP reports " << hipGetErrorString(status)          \
+                << std::endl;                                                  \
+      std::abort();                                                            \
+    }                                                                          \
+  }
 
 // Conditional assertion based on debug mode for HIP operations
 #ifdef NDEBUG
-#define HIP_ASSERT( x ) x // No assertion in release mode
+#define HIP_ASSERT(x) x // No assertion in release mode
 #else
-#define HIP_ASSERT( x ) ( assert( ( x ) == hipSuccess ) ) // Assert in debug mode
+#define HIP_ASSERT(x) (assert((x) == hipSuccess)) // Assert in debug mode
 #endif
-
 
 struct Vec3 {
   float x, y, z;
-  __host__ __device__ Vec3() : x(0), y(0), z(0) {}
-  __host__ __device__ Vec3(float x, float y, float z) : x(x), y(y), z(z) {}
+  __host__ __device__ __inline__ Vec3() : x(0), y(0), z(0) {}
+  __host__ __device__ __inline__ Vec3(float a) : x(a), y(a), z(a) {}
+  __host__ __device__ __inline__ Vec3(float x, float y, float z)
+      : x(x), y(y), z(z) {}
 
-  __host__ __device__ Vec3 operator+(const Vec3 &v) const {
+  __host__ __device__ __inline__ Vec3 operator+(const Vec3 &v) const {
     return Vec3(x + v.x, y + v.y, z + v.z);
   }
-  __host__ __device__ Vec3 operator-(const Vec3 &v) const {
+  __host__ __device__ __inline__ Vec3 operator-(const Vec3 &v) const {
     return Vec3(x - v.x, y - v.y, z - v.z);
   }
-  __host__ __device__ Vec3 operator*(float f) const {
+  __host__ __device__ __inline__ Vec3 operator*(float f) const {
     return Vec3(x * f, y * f, z * f);
   }
 
-  __host__ __device__ Vec3 operator*(const Vec3 &v) const {
+  __host__ __device__ __inline__ Vec3 operator*(const Vec3 &v) const {
     return Vec3(x * v.x, y * v.y, z * v.z);
   }
 
-  __host__ __device__ Vec3 operator/(const Vec3 &other) const {
+  __host__ __device__ __inline__ Vec3 operator/(const Vec3 &other) const {
     return Vec3(x / other.x, y / other.y, z / other.z);
   }
-  __host__ __device__ Vec3 operator/(float scalar) const {
+  __host__ __device__ __inline__ Vec3 operator/(float scalar) const {
     return Vec3(x / scalar, y / scalar, z / scalar);
   }
 
-  __host__ __device__ float &operator[](int i) { return (&x)[i]; }
-  __host__ __device__ const float &operator[](int i) const { return (&x)[i]; }
+  __host__ __device__ __inline__ float &operator[](int i) { return (&x)[i]; }
+  __host__ __device__ __inline__ const float &operator[](int i) const {
+    return (&x)[i];
+  }
 };
 
-__host__ __device__ Vec3 min(const Vec3 &a, const Vec3 &b) {
+__host__ __device__ __inline__ Vec3 min(const Vec3 &a, const Vec3 &b) {
   return Vec3(fminf(a.x, b.x), fminf(a.y, b.y), fminf(a.z, b.z));
 }
 
-__host__ __device__ Vec3 max(const Vec3 &a, const Vec3 &b) {
+__host__ __device__ __inline__ Vec3 max(const Vec3 &a, const Vec3 &b) {
   return Vec3(fmaxf(a.x, b.x), fmaxf(a.y, b.y), fmaxf(a.z, b.z));
 }
 
-__host__ __device__ Vec3 cross(const Vec3 &a, const Vec3 &b) {
+__host__ __device__ __inline__ Vec3 cross(const Vec3 &a, const Vec3 &b) {
   return Vec3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z,
               a.x * b.y - a.y * b.x);
 }
 
-__host__ __device__ float dot(const Vec3 &a, const Vec3 &b) {
+__host__ __device__ __inline__ float dot(const Vec3 &a, const Vec3 &b) {
   return a.x * b.x + a.y * b.y + a.z * b.z;
 }
 
-__device__ void atomicMinVec3(Vec3 *addr, Vec3 val) {
+__device__ __inline__ void atomicMinVec3(Vec3 *addr, Vec3 val) {
   atomicMin((int *)&addr->x, __float_as_int(val.x));
   atomicMin((int *)&addr->y, __float_as_int(val.y));
   atomicMin((int *)&addr->z, __float_as_int(val.z));
 }
 
-__device__ void atomicMaxVec3(Vec3 *addr, Vec3 val) {
+__device__ __inline__ void atomicMaxVec3(Vec3 *addr, Vec3 val) {
   atomicMax((int *)&addr->x, __float_as_int(val.x));
   atomicMax((int *)&addr->y, __float_as_int(val.y));
   atomicMax((int *)&addr->z, __float_as_int(val.z));
@@ -168,6 +168,14 @@ struct BVHNode {
   int triangleIndex;
 };
 
+struct BVHNode4 {
+  AABB bounds;
+  int triangleIndex;
+  int triangleCount;
+  int leftChild;
+  int rightChild;
+};
+
 struct Intersection {
   bool hit;
   float t;
@@ -179,7 +187,7 @@ struct TriangleInfo {
   int index;
 };
 
-__host__ __device__ inline void normalizeRayDirection(Ray &ray) {
+__host__ __device__ __inline__ void normalizeRayDirection(Ray &ray) {
   float len = sqrtf(ray.direction.x * ray.direction.x +
                     ray.direction.y * ray.direction.y +
                     ray.direction.z * ray.direction.z);
@@ -191,7 +199,8 @@ __host__ __device__ inline void normalizeRayDirection(Ray &ray) {
   }
 }
 
-__host__ __device__ float calculateCircumradius(const Triangle &triangle) {
+__host__ __device__ __inline__ float
+calculateCircumradius(const Triangle &triangle) {
   float a = sqrt(pow(triangle.v1.x - triangle.v0.x, 2) +
                  pow(triangle.v1.y - triangle.v0.y, 2) +
                  pow(triangle.v1.z - triangle.v0.z, 2));
@@ -209,8 +218,8 @@ __host__ __device__ float calculateCircumradius(const Triangle &triangle) {
   return radius;
 }
 
-__host__ __device__ float calculateHalfOpeningAngle(const Triangle &triangle,
-                                                    const Vec3 &origin) {
+__host__ __device__ __inline__ float
+calculateHalfOpeningAngle(const Triangle &triangle, const Vec3 &origin) {
   // This function will be used to speed up the calculations and will adapt the
   // limit angle of the sameDirection function
   Vec3 barycenter = {(triangle.v0.x + triangle.v1.x + triangle.v2.x) / 3.0f,
@@ -233,7 +242,7 @@ __host__ __device__ float calculateHalfOpeningAngle(const Triangle &triangle,
   return halfOpeningAngle;
 }
 
-__host__ __device__ float angleScalar(const Vec3 v1, const Vec3 v2) {
+__host__ __device__ __inline__ float angleScalar(const Vec3 v1, const Vec3 v2) {
   float p = (v1.x) * (v2.x) + (v1.y) * (v2.y) + (v1.z) * (v2.z);
   float n1 = sqrt(v1.x * v1.x + v1.y * v1.y + v1.z * v1.z);
   float n2 = sqrt(v2.x * v2.x + v2.y * v2.y + v2.z * v2.z);
@@ -248,8 +257,8 @@ __host__ __device__ float angleScalar(const Vec3 v1, const Vec3 v2) {
   return (res); // in radian
 }
 
-__host__ __device__ bool sameDirection(Triangle &tri, Ray &ray,
-                                       const float &angleLim) {
+__host__ __device__ __inline__ bool sameDirection(Triangle &tri, Ray &ray,
+                                                  const float &angleLim) {
   Vec3 dT;
   dT.x = (tri.v0.x + tri.v1.x + tri.v2.x) / 3.0f - ray.origin.x;
   dT.y = (tri.v0.y + tri.v1.y + tri.v2.y) / 3.0f - ray.origin.y;
@@ -263,8 +272,8 @@ __host__ __device__ bool sameDirection(Triangle &tri, Ray &ray,
   return (angle1 <= angleLim) && (angle1 <= angle2);
 }
 
-__host__ __device__ bool sameDirectionTest(Triangle &tri, Ray &ray,
-                                           const float &angleLim) {
+__host__ __device__ __inline__ bool sameDirectionTest(Triangle &tri, Ray &ray,
+                                                      const float &angleLim) {
   Vec3 dT0 = tri.v0 - ray.origin;
   Vec3 dT1 = tri.v1 - ray.origin;
   Vec3 dT2 = tri.v2 - ray.origin;
@@ -306,8 +315,9 @@ void writeBVHNodes(const std::vector<BVHNode> &hostNodes) {
 //*******************************************************************************************************************************
 // BEGIN::RAY TRACING
 
-__device__ bool rayTriangleIntersect0(const Ray &ray, const Triangle &tri,
-                                      float &t, Vec3 &intersectionPoint) {
+__device__ __inline__ bool rayTriangleIntersect0(const Ray &ray,
+                                                 const Triangle &tri, float &t,
+                                                 Vec3 &intersectionPoint) {
   Vec3 edge1 = tri.v1 - tri.v0;
   Vec3 edge2 = tri.v2 - tri.v0;
   Vec3 h = cross(ray.direction, edge2);
@@ -343,8 +353,9 @@ __device__ bool rayTriangleIntersect0(const Ray &ray, const Triangle &tri,
   return (t > 1e-6f);
 }
 
-__device__ bool rayTriangleIntersect(const Ray &ray, const Triangle &tri,
-                                     float &t, Vec3 &intersectionPoint) {
+__device__ __inline__ bool rayTriangleIntersect(const Ray &ray,
+                                                const Triangle &tri, float &t,
+                                                Vec3 &intersectionPoint) {
   Vec3 edge1 = tri.v1 - tri.v0;
   Vec3 edge2 = tri.v2 - tri.v0;
   Vec3 h = cross(ray.direction, edge2);
@@ -370,6 +381,7 @@ __device__ bool rayTriangleIntersect(const Ray &ray, const Triangle &tri,
 
   // If t is negative, the intersection is behind the origin of the ray
   // Which means that the origin is inside the triangle
+
   if (t < -EPSILON) {
     t = 0.0f;
     intersectionPoint = ray.origin;
@@ -377,6 +389,7 @@ __device__ bool rayTriangleIntersect(const Ray &ray, const Triangle &tri,
   }
 
   // If t is very close to zero, consider that the origin is on the triangle
+
   if (fabs(t) < EPSILON) {
     intersectionPoint = ray.origin;
     return true;
@@ -397,11 +410,72 @@ __device__ bool rayTriangleIntersect(const Ray &ray, const Triangle &tri,
   return false;
 }
 
+__device__ __inline__ bool rayTriangleIntersect4(const Ray &ray,
+                                                 const Triangle &tri, float &t,
+                                                 Vec3 &intersectionPoint) {
+  Vec3 edge1 = tri.v1 - tri.v0;
+  Vec3 edge2 = tri.v2 - tri.v0;
+  Vec3 h = cross(ray.direction, edge2);
+  float a = dot(edge1, h);
+  const float EPSILON = 1e-8f;
+  if (fabs(a) < EPSILON)
+    return false; // Rayon parallèle au triangle
+
+  float f = 1.0f / a;
+  Vec3 s = ray.origin - tri.v0;
+  float u = f * dot(s, h);
+
+  if (u < 0.0f || u > 1.0f)
+    return false;
+
+  Vec3 q = cross(s, edge1);
+  float v = f * dot(ray.direction, q);
+
+  if (v < 0.0f || u + v > 1.0f)
+    return false;
+
+  t = f * dot(edge2, q);
+
+  // If t is negative, the intersection is behind the origin of the ray
+  // Which means that the origin is inside the triangle
+  /*
+   if (t < -EPSILON) {
+     t = 0.0f;
+     intersectionPoint = ray.origin;
+     return true;
+   }
+   */
+
+  // If t is very close to zero, consider that the origin is on the triangle
+
+  /*
+  if (fabs(t) < EPSILON) {
+    intersectionPoint = ray.origin;
+    return true;
+  }
+  */
+
+  // Normal intersection in front of the ray origin
+  // if (t > EPSILON) {
+  if (t >= 0.0f) {
+    intersectionPoint.x = ray.origin.x + t * ray.direction.x;
+    intersectionPoint.y = ray.origin.y + t * ray.direction.y;
+    intersectionPoint.z = ray.origin.z + t * ray.direction.z;
+    return true;
+  }
+
+  intersectionPoint.x = INFINITY;
+  intersectionPoint.y = INFINITY;
+  intersectionPoint.z = INFINITY;
+
+  return false;
+}
+
 /*
-__device__ bool rayTriangleIntersectBord(const Ray& ray, const Triangle& tri,
-float& t, Vec3& intersectionPoint, bool* hitEdge, bool* hitVertex) { Vec3 edge1
-= tri.v1 - tri.v0; Vec3 edge2 = tri.v2 - tri.v0; Vec3 h = cross(ray.direction,
-edge2); float a = dot(edge1, h);
+__device__ __inline__ bool rayTriangleIntersectBord(const Ray& ray, const
+Triangle& tri, float& t, Vec3& intersectionPoint, bool* hitEdge, bool*
+hitVertex) { Vec3 edge1 = tri.v1 - tri.v0; Vec3 edge2 = tri.v2 - tri.v0; Vec3 h
+= cross(ray.direction, edge2); float a = dot(edge1, h);
 
         // Vérification si le rayon est parallèle au triangle
         if (a > -1e-6f && a < 1e-6f) return false;
@@ -447,11 +521,10 @@ epsilon || length(intersectionPoint - tri.v2) < epsilon);
 }
 */
 
-__device__ bool rayTriangleIntersectSurfaceEdge(const Ray &ray,
-                                                const Triangle &tri, float &t,
-                                                Vec3 &intersectionPoint,
-                                                bool *hitEdge,
-                                                bool *hitVertex) {
+__device__ __inline__ bool
+rayTriangleIntersectSurfaceEdge(const Ray &ray, const Triangle &tri, float &t,
+                                Vec3 &intersectionPoint, bool *hitEdge,
+                                bool *hitVertex) {
   Vec3 edge1 = tri.v1 - tri.v0;
   Vec3 edge2 = tri.v2 - tri.v0;
   Vec3 h = cross(ray.direction, edge2);
@@ -511,7 +584,7 @@ __device__ bool rayTriangleIntersectSurfaceEdge(const Ray &ray,
   }
 }
 
-__device__ bool rayAABBIntersect(const Ray &ray, const AABB &aabb) {
+__device__ __inline__ bool rayAABBIntersect(const Ray &ray, const AABB &aabb) {
   Vec3 invDir = Vec3(1.0f / ray.direction.x, 1.0f / ray.direction.y,
                      1.0f / ray.direction.z);
   Vec3 tMin = (aabb.min - ray.origin) * invDir;
@@ -520,35 +593,33 @@ __device__ bool rayAABBIntersect(const Ray &ray, const AABB &aabb) {
       Vec3(fminf(tMin.x, tMax.x), fminf(tMin.y, tMax.y), fminf(tMin.z, tMax.z));
   Vec3 t2 =
       Vec3(fmaxf(tMin.x, tMax.x), fmaxf(tMin.y, tMax.y), fmaxf(tMin.z, tMax.z));
+
   float tNear = fmaxf(fmaxf(t1.x, t1.y), t1.z);
   float tFar = fminf(fminf(t2.x, t2.y), t2.z);
   return tNear <= tFar;
 }
 
-__device__ bool rayAABBIntersect4(const Ray &ray, const AABB &aabb) {
-  const float EPSILON = 1e-6f;
-  Vec3 invDir = Vec3(1.0f / ray.direction.x, 1.0f / ray.direction.y,
-                     1.0f / ray.direction.z);
-  Vec3 tMin = (aabb.min - ray.origin) * invDir;
-  Vec3 tMax = (aabb.max - ray.origin) * invDir;
-  Vec3 t1 = min(tMin, tMax);
-  Vec3 t2 = max(tMin, tMax);
-  float tNear = max(max(t1.x, t1.y), t1.z);
-  float tFar = min(min(t2.x, t2.y), t2.z);
+__device__ __inline__ bool rayAABBIntersect4(const Ray &ray, const AABB &aabb) {
+  const float EPSILON = 1e-8f;
+  float3 invDir;
+  invDir.x = 1.0f / ray.direction.x;
+  invDir.y = 1.0f / ray.direction.y;
+  invDir.z = 1.0f / ray.direction.z;
 
-  printf("Ray origin: (%f, %f, %f), direction: (%f, %f, %f)\n", ray.origin.x,
-         ray.origin.y, ray.origin.z, ray.direction.x, ray.direction.y,
-         ray.direction.z);
-  printf("AABB min: (%f, %f, %f), max: (%f, %f, %f)\n", aabb.min.x, aabb.min.y,
-         aabb.min.z, aabb.max.x, aabb.max.y, aabb.max.z);
-  printf("tNear: %f, tFar: %f\n", tNear, tFar);
+  float3 t1, t2;
+  t1.x = (aabb.min.x - ray.origin.x) * invDir.x;
+  t1.y = (aabb.min.y - ray.origin.y) * invDir.y;
+  t1.z = (aabb.min.z - ray.origin.z) * invDir.z;
+  t2.x = (aabb.max.x - ray.origin.x) * invDir.x;
+  t2.y = (aabb.max.y - ray.origin.y) * invDir.y;
+  t2.z = (aabb.max.z - ray.origin.z) * invDir.z;
 
-  // return tNear <= tFar + EPSILON && tFar >= -EPSILON;
+  float tNear =
+      fmaxf(fmaxf(fminf(t1.x, t2.x), fminf(t1.y, t2.y)), fminf(t1.z, t2.z));
+  float tFar =
+      fminf(fminf(fmaxf(t1.x, t2.x), fmaxf(t1.y, t2.y)), fmaxf(t1.z, t2.z));
 
-  if (tFar < 0) {
-    return tNear < 0;
-  }
-  return tNear <= tFar + EPSILON;
+  return tFar >= 0.0f && tNear <= tFar + EPSILON;
 }
 
 __global__ void raytraceKernelOld(Ray *rays, int numRays, BVHNode *bvhNodes,
@@ -721,14 +792,14 @@ __global__ void raytraceKernel(Ray *rays, int numRays, BVHNode *bvhNodes,
 
 // FOR rayTracing parallele
 
-__device__ void swap(float &a, float &b) {
+__device__ __inline__ void swap(float &a, float &b) {
   float temp = a;
   a = b;
   b = temp;
 }
 
-__device__ bool intersectAABB(const Ray &ray, const AABB &box, float &tMin,
-                              float &tMax) {
+__device__ __inline__ bool intersectAABB(const Ray &ray, const AABB &box,
+                                         float &tMin, float &tMax) {
   // Inverser la direction du rayon pour éviter les divisions par zéro
   Vec3 invDir(1.0f / ray.direction.x, 1.0f / ray.direction.y,
               1.0f / ray.direction.z);
@@ -820,23 +891,30 @@ raytraceKernel_Parallel004(Ray *rays, int numRays, BVHNode *bvhNodes,
     if (nodeIdx < 0)
       continue;
 
-    // if (!rayAABBIntersect4(ray, node.bounds)) continue;
+    if (!rayAABBIntersect4(ray, node.bounds))
+      continue;
 
     if (node.triangleCount == 1) {
       Triangle &tri = triangles[node.triangleIndex];
       // if (sameDirectionTest(tri,ray,angleLim))
       {
         float t;
-        if (rayTriangleIntersect(ray, tri, t, intersectionPointT)) {
+        if (rayTriangleIntersect4(ray, tri, t, intersectionPointT)) {
 
           if (isView)
-            printf("      Num Ray[%i] <%f %f %f>\n", idx, intersectionPointT.x,
-                   intersectionPointT.y, intersectionPointT.z);
+            printf("      Num Ray[%i] <%f %f %f> dist=%f\n", idx,
+                   intersectionPointT.x, intersectionPointT.y,
+                   intersectionPointT.z, t);
           if (t < closestT) {
             closestT = t;
             closestTriangle = node.triangleIndex;
             closestIntersectionPoint = intersectionPointT;
             closesIntersectionId = triangles[closestTriangle].id;
+
+            if (isView)
+              printf("      Close Num Ray[%i] <%f %f %f> dist=%f\n", idx,
+                     intersectionPointT.x, intersectionPointT.y,
+                     intersectionPointT.z, t);
           }
         }
       }
@@ -861,90 +939,134 @@ raytraceKernel_Parallel004(Ray *rays, int numRays, BVHNode *bvhNodes,
 
 __global__ void
 raytraceKernel_Parallel005(Ray *rays, int numRays, BVHNode *bvhNodes,
-                           Triangle *triangles, int *hitTriangles,
-                           float *distance, Vec3 *intersectionPoint, int *hitId)
-
-{
+                           int numNodes, Triangle *triangles, int numTriangles,
+                           int *hitTriangles, float *distance,
+                           Vec3 *intersectionPoint, int *hitId) {
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (idx >= numRays)
+  if (idx >= numRays || numNodes <= 0 || numTriangles <= 0)
     return;
 
   Ray ray = rays[idx];
-  int stack[64];    // // Stack for the BVH race
-  int stackPtr = 0; // On starts with the root of the BVH
+  constexpr int MAX_STACK_SIZE = 64;
+  int stack[MAX_STACK_SIZE];
+  int stackPtr = 0;
+
   stack[stackPtr++] = 0;
 
   float closestT = INFINITY;
   int closestTriangle = -1;
-  int closesIntersectionId = -1;
-
+  int closestIntersectionId = -1;
   Vec3 intersectionPointT;
   intersectionPointT.x = INFINITY;
   intersectionPointT.y = INFINITY;
   intersectionPointT.z = INFINITY;
+
   Vec3 closestIntersectionPoint;
   closestIntersectionPoint.x = INFINITY;
   closestIntersectionPoint.y = INFINITY;
   closestIntersectionPoint.z = INFINITY;
 
-  bool isView = false; // isView = true;
+  constexpr float angleLim = 0.6f;
 
-  const float angleLim = 0.6f;
-
-  while (stackPtr > 0) {
+  while (stackPtr > 0 && stackPtr < MAX_STACK_SIZE) {
     int nodeIdx = stack[--stackPtr];
-    const BVHNode &node = bvhNodes[nodeIdx];
-
-    // if (nodeIdx < 0 || nodeIdx >= numRays) continue;
-
-    if (nodeIdx < 0)
+    if (nodeIdx < 0 || nodeIdx >= numNodes)
       continue;
 
-    // if (!rayAABBIntersect(ray, node.bounds)) continue;
-
-    // if (intersectAABB(ray, node.bounds)) { //new
-
-    if (rayAABBIntersect(ray, node.bounds)) { // new
-
-      // if (node.triangleCount >= 0) //If it is a leaf node
-      if (node.triangleCount == 1) // If it is a leaf node
+    BVHNode &node = bvhNodes[nodeIdx];
+    if (node.triangleCount == 1 && node.triangleIndex >= 0 &&
+        node.triangleIndex < numTriangles) {
+      if (!rayAABBIntersect4(ray, node.bounds)) // add test 1
+        continue;
+      Triangle &tri = triangles[node.triangleIndex];
+      // if (sameDirectionTest(tri, ray, angleLim)) //add test 2
       {
-        Triangle &tri = triangles[node.triangleIndex];
-        // if (sameDirectionTest(tri,ray,angleLim))
-        {
-          float t;
-          if (rayTriangleIntersect(ray, tri, t, intersectionPointT)) {
-
-            if (isView)
-              printf("      Num Ray[%i] <%f %f %f>\n", idx,
-                     intersectionPointT.x, intersectionPointT.y,
-                     intersectionPointT.z);
-            if (t < closestT) {
-              closestT = t;
-              closestTriangle = node.triangleIndex;
-              closestIntersectionPoint = intersectionPointT;
-              closesIntersectionId = triangles[closestTriangle].id;
-            }
+        float t;
+        Vec3 intersectionPointT;
+        if (rayTriangleIntersect4(ray, tri, t, intersectionPointT)) {
+          if (t < closestT) {
+            closestT = t;
+            closestTriangle = node.triangleIndex;
+            closestIntersectionPoint = intersectionPointT;
+            closestIntersectionId = tri.id;
           }
         }
-      } else { // Internal node
-        stack[stackPtr++] = node.leftChild;
-        stack[stackPtr++] = node.rightChild;
       }
+    } else if (stackPtr < MAX_STACK_SIZE - 1) {
+      if (node.leftChild >= 0 && node.leftChild < numNodes)
+        stack[stackPtr++] = node.leftChild;
+      if (node.rightChild >= 0 && node.rightChild < numNodes &&
+          stackPtr < MAX_STACK_SIZE)
+        stack[stackPtr++] = node.rightChild;
     }
   }
-
-  // if (closesIntersectionId>0) printf("      Num Ray[%i] dist=%f <%f %f
-  // %f>\n", idx, closestT,intersectionPointT.x, intersectionPointT.y,
-  // intersectionPointT.z);
-
-  // if (closesIntersectionId > 0) printf("      Num Ray[%i] dist=%f\n", idx,
-  // closestT);
-
   hitTriangles[idx] = closestTriangle;
   distance[idx] = closestT;
   intersectionPoint[idx] = closestIntersectionPoint;
-  hitId[idx] = closesIntersectionId;
+  hitId[idx] = closestIntersectionId;
+}
+
+__global__ void raytraceKernel_Parallel006(
+    Ray *rays, int numRays, BVHNode *bvhNodes, Triangle *triangles,
+    int *hitTriangles, float *distance, Vec3 *intersectionPoint, int *hitId) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx >= numRays)
+    return;
+
+  Ray ray = rays[idx];
+  constexpr int MAX_STACK_SIZE = 64;
+  // constexpr int MAX_STACK_SIZE = 32; // voir si on peut jouer là dessus pour
+  // les perf constexpr int MAX_STACK_SIZE = 128;
+  int stack[MAX_STACK_SIZE];
+  int stackPtr = 0;
+
+  float closestT = INFINITY;
+  int closestTriangle = -1;
+  int closestIntersectionId = -1;
+  Vec3 closestIntersectionPoint = Vec3(INFINITY, INFINITY, INFINITY);
+
+  stack[stackPtr++] = 0;
+
+  while (stackPtr > 0 && stackPtr < MAX_STACK_SIZE) {
+    int nodeIdx = stack[--stackPtr];
+    const BVHNode &node = bvhNodes[nodeIdx];
+
+    if (!rayAABBIntersect(ray, node.bounds))
+      continue;
+
+    // if (nodeIdx < 0) continue;
+
+    if (node.triangleCount > 0) {
+      // Leaf node
+      for (int i = 0; i < node.triangleCount; ++i) {
+        int triIdx = node.firstTriangleIndex + i;
+        Triangle &tri = triangles[triIdx];
+        float t;
+        Vec3 intersectionPointT;
+
+        if (rayTriangleIntersect(ray, tri, t, intersectionPointT)) {
+          if (t < closestT) {
+            closestT = t;
+            closestTriangle = triIdx;
+            closestIntersectionPoint = intersectionPointT;
+            closestIntersectionId = tri.id;
+          }
+        }
+      }
+    } else {
+      // Internal node - traverse children
+      if (node.leftChild >= 0)
+        stack[stackPtr++] = node.leftChild;
+      if (node.rightChild >= 0)
+        stack[stackPtr++] = node.rightChild;
+    }
+  }
+
+  // Store results
+  hitTriangles[idx] = closestTriangle;
+  distance[idx] = closestT;
+  intersectionPoint[idx] = closestIntersectionPoint;
+  hitId[idx] = closestIntersectionId;
 }
 
 // END::RAY TRACING
@@ -1282,8 +1404,9 @@ void buildBVH_GPU_Version1(Triangle *d_triangles, BVHNode *d_nodes,
 
   // Verification 2
   BVHNode *h_nodes = new BVHNode[2 * numTriangles - 1];
-  HIP_ASSERT(hipMemcpy(h_nodes, d_nodes, (2 * numTriangles - 1) * sizeof(BVHNode),
-            hipMemcpyDeviceToHost));
+  HIP_ASSERT(hipMemcpy(h_nodes, d_nodes,
+                       (2 * numTriangles - 1) * sizeof(BVHNode),
+                       hipMemcpyDeviceToHost));
   verifyBVH(h_nodes, 2 * numTriangles - 1);
   delete[] h_nodes;
 }
@@ -1295,9 +1418,9 @@ void buildBVH_GPU_Version1(Triangle *d_triangles, BVHNode *d_nodes,
 //*******************************************************************************************************************************
 // BEGIN::BVH GPU 2
 
-__host__ __device__ void calculateBoundingBox(const Triangle &triangle,
-                                              Vec3 &min_values,
-                                              Vec3 &max_values) {
+__host__ __device__ __inline__ void
+calculateBoundingBox(const Triangle &triangle, Vec3 &min_values,
+                     Vec3 &max_values) {
   min_values = min(triangle.v0, min(triangle.v1, triangle.v2));
   max_values = max(triangle.v0, max(triangle.v1, triangle.v2));
 }
@@ -1324,8 +1447,9 @@ void buildBVH_GPU_Version2(Triangle *d_triangles, BVHNode *d_nodes,
                      d_triangles, d_nodes, numTriangles);
 
   BVHNode *h_nodes = new BVHNode[2 * numTriangles - 1];
-  HIP_ASSERT(hipMemcpy(h_nodes, d_nodes, (2 * numTriangles - 1) * sizeof(BVHNode),
-            hipMemcpyDeviceToHost));
+  HIP_ASSERT(hipMemcpy(h_nodes, d_nodes,
+                       (2 * numTriangles - 1) * sizeof(BVHNode),
+                       hipMemcpyDeviceToHost));
 
   for (int i = numTriangles - 2; i >= 0; --i) {
     BVHNode &node = h_nodes[i];
@@ -1340,8 +1464,9 @@ void buildBVH_GPU_Version2(Triangle *d_triangles, BVHNode *d_nodes,
     node.bounds.min = min(leftNode.bounds.min, rightNode.bounds.min);
     node.bounds.max = max(leftNode.bounds.max, rightNode.bounds.max);
   }
-  HIP_ASSERT(hipMemcpy(d_nodes, h_nodes, (2 * numTriangles - 1) * sizeof(BVHNode),
-            hipMemcpyHostToDevice));
+  HIP_ASSERT(hipMemcpy(d_nodes, h_nodes,
+                       (2 * numTriangles - 1) * sizeof(BVHNode),
+                       hipMemcpyHostToDevice));
   delete[] h_nodes;
 }
 
@@ -1377,13 +1502,144 @@ void buildBVH_GPU_Version3(Triangle *d_triangles, BVHNode *d_nodes,
 //-------------------------------------------------------------------------------------------------------------------------------
 //*******************************************************************************************************************************
 
+__device__ __inline__ bool rayAABBIntersectA(const Ray &ray, const AABB &aabb) {
+  Vec3 invDir = Vec3(1.0f / ray.direction.x, 1.0f / ray.direction.y,
+                     1.0f / ray.direction.z);
+  Vec3 t0 = (aabb.min - ray.origin) * invDir;
+  Vec3 t1 = (aabb.max - ray.origin) * invDir;
+  Vec3 tmin = min(t0, t1);
+  Vec3 tmax = max(t0, t1);
+  float tNear = fmaxf(fmaxf(tmin.x, tmin.y), tmin.z);
+  float tFar = fminf(fminf(tmax.x, tmax.y), tmax.z);
+  return tNear <= tFar && tFar > 0;
+}
+
+__global__ void raytraceKernel4(Ray *rays, int numRays, BVHNode *bvhNodes,
+                                Triangle *triangles, int *hitTriangles,
+                                float *distance, Vec3 *intersectionPoint,
+                                int *hitId) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx >= numRays)
+    return;
+
+  Ray ray = rays[idx];
+  constexpr int MAX_STACK_SIZE = 64;
+  int stack[MAX_STACK_SIZE];
+  int stackPtr = 0;
+
+  float closestT = INFINITY;
+  int closestTriangle = -1;
+  int closestIntersectionId = -1;
+  Vec3 closestIntersectionPoint = Vec3(INFINITY);
+
+  stack[stackPtr++] = 0;
+
+  while (stackPtr > 0) {
+    int nodeIdx = stack[--stackPtr];
+    const BVHNode &node = bvhNodes[nodeIdx];
+
+    if (!rayAABBIntersectA(ray, node.bounds))
+      continue;
+
+    if (node.triangleCount > 0) {
+      for (int i = 0; i < node.triangleCount; ++i) {
+        Triangle &tri = triangles[node.triangleIndex + i];
+        float t;
+        Vec3 intersectionPointT;
+
+        if (rayTriangleIntersect4(ray, tri, t, intersectionPointT)) {
+          // printf("BING\n");
+          if (t < closestT) {
+            closestT = t;
+            closestTriangle = node.triangleIndex + i;
+            closestIntersectionPoint = intersectionPointT;
+            closestIntersectionId = tri.id;
+          }
+        }
+      }
+    } else {
+      if (node.leftChild >= 0)
+        stack[stackPtr++] = node.leftChild;
+      if (node.rightChild >= 0)
+        stack[stackPtr++] = node.rightChild;
+    }
+
+    if (stackPtr >= MAX_STACK_SIZE)
+      break;
+  }
+
+  hitTriangles[idx] = closestTriangle;
+  distance[idx] = closestT;
+  intersectionPoint[idx] = closestIntersectionPoint;
+  hitId[idx] = closestIntersectionId;
+}
+
+__global__ void initializeLeaves4(Triangle *triangles, BVHNode *nodes,
+                                  int numTriangles) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx < numTriangles) {
+    BVHNode &node = nodes[numTriangles - 1 + idx];
+    Triangle &tri = triangles[idx];
+
+    node.bounds.min = min(tri.v0, min(tri.v1, tri.v2));
+    node.bounds.max = max(tri.v0, max(tri.v1, tri.v2));
+    node.triangleIndex = idx;
+    node.triangleCount = 1;
+    node.leftChild = -1;
+    node.rightChild = -1;
+  }
+}
+
+__global__ void buildInternalNodes4(BVHNode *nodes, int numInternalNodes) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx < numInternalNodes) {
+    int nodeIndex = numInternalNodes - 1 - idx;
+    BVHNode &node = nodes[nodeIndex];
+
+    int leftChild = 2 * nodeIndex + 1;
+    int rightChild = 2 * nodeIndex + 2;
+
+    if (leftChild < 2 * numInternalNodes - 1) {
+      BVHNode &leftNode = nodes[leftChild];
+      BVHNode &rightNode = nodes[rightChild];
+      node.bounds.min = min(leftNode.bounds.min, rightNode.bounds.min);
+      node.bounds.max = max(leftNode.bounds.max, rightNode.bounds.max);
+      node.triangleCount = 0;
+      node.leftChild = leftChild;
+      node.rightChild = rightChild;
+      node.triangleIndex = -1;
+    }
+  }
+}
+
+void buildBVH_GPU_Version4(Triangle *d_triangles, BVHNode *d_nodes,
+                           int numTriangles) {
+  int totalNodes = 2 * numTriangles - 1;
+  int blockSize = 512;
+
+  printf("buildBVH_GPU_Version4\n");
+
+  // Initialize leaf nodes in parallel
+  int numBlocksLeaves = (numTriangles + blockSize - 1) / blockSize;
+  hipLaunchKernelGGL(initializeLeaves4, dim3(numBlocksLeaves), dim3(blockSize),
+                     0, 0, d_triangles, d_nodes, numTriangles);
+  hipDeviceSynchronize();
+
+  // Build internal nodes in parallel
+  int numInternalNodes = numTriangles - 1;
+  int numBlocksInternal = (numInternalNodes + blockSize - 1) / blockSize;
+  hipLaunchKernelGGL(buildInternalNodes4, dim3(numBlocksInternal),
+                     dim3(blockSize), 0, 0, d_nodes, numInternalNodes);
+  hipDeviceSynchronize();
+}
+
 // END::BVH GPU
 
 //*******************************************************************************************************************************
 // BEGIN::BVH GPU 3
 
-__device__ bool compareTriangles(const TriangleInfo &a, const TriangleInfo &b,
-                                 int axis) {
+__device__ __inline__ bool compareTriangles(const TriangleInfo &a,
+                                            const TriangleInfo &b, int axis) {
   return a.centroid[axis] < b.centroid[axis];
 }
 
@@ -1517,6 +1773,58 @@ __global__ void buildBVHNodesParallel(BVHNode *nodes, TriangleInfo *triInfo,
   }
 }
 
+__global__ void buildBVHNodesParallelBeta(BVHNode *nodes, TriangleInfo *triInfo,
+                                          Triangle *triangles,
+                                          int numTriangles) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  int totalNodes = 2 * numTriangles - 1;
+
+  if (idx >= totalNodes)
+    return;
+
+  BVHNode &node = nodes[idx];
+
+  if (idx >= numTriangles - 1) { // Leaf node
+    int triIdx = idx - (numTriangles - 1);
+    Triangle &tri = triangles[triInfo[triIdx].index];
+
+    // Initialize node bounds with the first vertex of the triangle
+    node.bounds.min = node.bounds.max = tri.v0;
+
+    // Expand bounds to include all vertices
+    node.bounds.min = min(node.bounds.min, min(tri.v1, tri.v2));
+    node.bounds.max = max(node.bounds.max, max(tri.v1, tri.v2));
+
+    node.triangleIndex = triInfo[triIdx].index;
+    node.triangleCount = 1;
+    node.leftChild = node.rightChild = -1;
+  } else { // Internal node
+    int leftChild = 2 * idx + 1;
+    int rightChild = 2 * idx + 2;
+
+    node.leftChild = leftChild;
+    node.rightChild = rightChild;
+    node.triangleIndex = -1;
+    node.triangleCount = 0;
+
+    // Initialize with invalid bounds
+    node.bounds.min = Vec3(INFINITY, INFINITY, INFINITY);
+    node.bounds.max = Vec3(-INFINITY, -INFINITY, -INFINITY);
+
+    if (leftChild < totalNodes) {
+      node.bounds = nodes[leftChild].bounds;
+      node.triangleCount = nodes[leftChild].triangleCount;
+
+      if (rightChild < totalNodes) {
+        // Expand bounds to include right child
+        node.bounds.min = min(node.bounds.min, nodes[rightChild].bounds.min);
+        node.bounds.max = max(node.bounds.max, nodes[rightChild].bounds.max);
+        node.triangleCount += nodes[rightChild].triangleCount;
+      }
+    }
+  }
+}
+
 __global__ void computeExtents(TriangleInfo *triInfo, int numTriangles,
                                float *minExtents, float *maxExtents) {
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -1528,35 +1836,6 @@ __global__ void computeExtents(TriangleInfo *triInfo, int numTriangles,
   }
 }
 
-void buildBVH_GPU_Parallel(Triangle *d_triangles, BVHNode *d_nodes,
-                           int numTriangles) {
-
-  std::cout << "[INFO]: buildBVH_GPU_Parallel\n";
-
-  int totalNodes = 2 * numTriangles - 1;
-  int blockSize = 512;
-  int numBlocks = (numTriangles + blockSize - 1) / blockSize;
-
-  TriangleInfo *d_triInfo;
-  HIP_ASSERT( hipMalloc(&d_triInfo, numTriangles * sizeof(TriangleInfo)));
-  hipLaunchKernelGGL(initTriangleInfo, dim3(numBlocks), dim3(blockSize), 0, 0,
-                     d_triangles, d_triInfo, numTriangles);
-
-  // Sort by axis X=0
-  for (int k = 2; k <= numTriangles; k *= 2) {
-    for (int j = k / 2; j > 0; j /= 2) {
-      hipLaunchKernelGGL(bitonicSort, dim3(numBlocks), dim3(blockSize), 0, 0,
-                         d_triInfo, j, k, numTriangles, 0);
-    }
-  }
-
-  numBlocks = (totalNodes + blockSize - 1) / blockSize;
-  hipLaunchKernelGGL(buildBVHNodes, dim3(numBlocks), dim3(blockSize), 0, 0,
-                     d_nodes, d_triInfo, d_triangles, numTriangles);
-
-  hipFree(d_triInfo);
-}
-
 void buildBVH_GPU_Parallel_Best_Axis(Triangle *d_triangles, BVHNode *d_nodes,
                                      int numTriangles) {
   std::cout << "[INFO]: buildBVH_GPU_Parallel\n";
@@ -1566,22 +1845,22 @@ void buildBVH_GPU_Parallel_Best_Axis(Triangle *d_triangles, BVHNode *d_nodes,
   int numBlocks = (numTriangles + blockSize - 1) / blockSize;
 
   TriangleInfo *d_triInfo;
-  HIP_ASSERT( hipMalloc(&d_triInfo, numTriangles * sizeof(TriangleInfo)));
+  HIP_ASSERT(hipMalloc(&d_triInfo, numTriangles * sizeof(TriangleInfo)));
   hipLaunchKernelGGL(initTriangleInfo, dim3(numBlocks), dim3(blockSize), 0, 0,
                      d_triangles, d_triInfo, numTriangles);
 
   // Compute extents
   float *d_minExtents, *d_maxExtents;
-  HIP_ASSERT( hipMalloc(&d_minExtents, 3 * sizeof(float)));
-  HIP_ASSERT( hipMalloc(&d_maxExtents, 3 * sizeof(float)));
+  HIP_ASSERT(hipMalloc(&d_minExtents, 3 * sizeof(float)));
+  HIP_ASSERT(hipMalloc(&d_maxExtents, 3 * sizeof(float)));
 
   // Initialize extents
   float initMin = std::numeric_limits<float>::max();
   float initMax = std::numeric_limits<float>::lowest();
   HIP_ASSERT(hipMemset(d_minExtents, *reinterpret_cast<int *>(&initMin),
-            3 * sizeof(float)));
+                       3 * sizeof(float)));
   HIP_ASSERT(hipMemset(d_maxExtents, *reinterpret_cast<int *>(&initMax),
-            3 * sizeof(float)));
+                       3 * sizeof(float)));
 
   hipLaunchKernelGGL(computeExtents, dim3(numBlocks), dim3(blockSize), 0, 0,
                      d_triInfo, numTriangles, d_minExtents, d_maxExtents);
@@ -1589,9 +1868,9 @@ void buildBVH_GPU_Parallel_Best_Axis(Triangle *d_triangles, BVHNode *d_nodes,
   // Copy extents back to host
   float h_minExtents[3], h_maxExtents[3];
   HIP_ASSERT(hipMemcpy(h_minExtents, d_minExtents, 3 * sizeof(float),
-            hipMemcpyDeviceToHost));
+                       hipMemcpyDeviceToHost));
   HIP_ASSERT(hipMemcpy(h_maxExtents, d_maxExtents, 3 * sizeof(float),
-            hipMemcpyDeviceToHost));
+                       hipMemcpyDeviceToHost));
 
   // Find axis with largest extent
   int bestAxis = 0;
@@ -1698,9 +1977,9 @@ void Test001(int mode) {
   // loadTrianglesFromOBJ("Triangle2Cube.obj", triangles, 12321);
   loadTrianglesFromOBJ("Test.obj", triangles, 12321);
 
-  Vec3 cameraOrigin(0.75, 0.75, 3.0);
-  float fov = 60.0f;
-  int imageWidth = 20;
+  Vec3 cameraOrigin(0.75, 0.75, 5.0);
+  float fov = 40.0f;
+  int imageWidth = 10;
   int imageHeight = imageWidth;
   int numRays = imageWidth * imageHeight;
   generateRays(rays, numRays, cameraOrigin, fov, imageWidth, imageHeight);
@@ -1713,13 +1992,17 @@ void Test001(int mode) {
   float *deviceDistanceResults;
   int *deviceIdResults;
 
-  HIP_ASSERT( hipMalloc(&deviceTriangles, triangles.size() * sizeof(Triangle)));
+  HIP_ASSERT(hipMalloc(&deviceTriangles, triangles.size() * sizeof(Triangle)));
   HIP_ASSERT(hipMemcpy(deviceTriangles, triangles.data(),
-            triangles.size() * sizeof(Triangle), hipMemcpyHostToDevice));
+                       triangles.size() * sizeof(Triangle),
+                       hipMemcpyHostToDevice));
 
   bool isUnifiedMemory = false;
   bool isGPU = false;
   isGPU = true;
+
+  int nbTriangles = triangles.size();
+  int nbNodes = 2 * nbTriangles - 1;
 
   if (mode == 0)
     isGPU = false;
@@ -1731,22 +2014,25 @@ void Test001(int mode) {
     t_end_0 = std::chrono::steady_clock::now();
     if (1 == 0)
       writeBVHNodes(bvhNodes);
-    HIP_ASSERT( hipMalloc(&devicebvhNodes, bvhNodes.size() * sizeof(BVHNode)));
+    HIP_ASSERT(hipMalloc(&devicebvhNodes, bvhNodes.size() * sizeof(BVHNode)));
     HIP_ASSERT(hipMemcpy(devicebvhNodes, bvhNodes.data(),
-              bvhNodes.size() * sizeof(BVHNode), hipMemcpyHostToDevice));
+                         bvhNodes.size() * sizeof(BVHNode),
+                         hipMemcpyHostToDevice));
   }
 
   if (isGPU) {
     int numTriangles = triangles.size();
-    HIP_ASSERT( hipMalloc(&devicebvhNodes, (2 * numTriangles - 1) * sizeof(BVHNode)));
+    HIP_ASSERT(
+        hipMalloc(&devicebvhNodes, (2 * numTriangles - 1) * sizeof(BVHNode)));
     t_begin_0 = std::chrono::steady_clock::now();
     // buildBVH_GPU_Version1(deviceTriangles, devicebvhNodes, numTriangles);
     if (mode == 2)
       buildBVH_GPU_Version2(deviceTriangles, devicebvhNodes, numTriangles);
     if (mode == 3)
       buildBVH_GPU_Version3(deviceTriangles, devicebvhNodes, numTriangles);
-    if (mode == 4)
-      buildBVH_GPU_Parallel(deviceTriangles, devicebvhNodes, numTriangles);
+    if (mode == 44)
+      buildBVH_GPU_Version4(deviceTriangles, devicebvhNodes, numTriangles);
+
     if (mode == 5)
       buildBVH_GPU_Parallel_Best_Axis(deviceTriangles, devicebvhNodes,
                                       numTriangles);
@@ -1775,31 +2061,34 @@ void Test001(int mode) {
   }
 
   std::cout << "[Ray Tracing]\n";
-  HIP_ASSERT( hipMalloc(&deviceRays, rays.size() * sizeof(Ray)));
+  HIP_ASSERT(hipMalloc(&deviceRays, rays.size() * sizeof(Ray)));
   HIP_ASSERT(hipMemcpy(deviceRays, rays.data(), rays.size() * sizeof(Ray),
-            hipMemcpyHostToDevice));
+                       hipMemcpyHostToDevice));
 
-  HIP_ASSERT( hipMalloc(&deviceHitTriangles, rays.size() * sizeof(int)));
-  HIP_ASSERT( hipMalloc(&deviceIntersectionPoint, rays.size() * sizeof(Vec3)));
-  HIP_ASSERT( hipMalloc(&deviceDistanceResults, rays.size() * sizeof(float)));
-  HIP_ASSERT( hipMalloc(&deviceIdResults, rays.size() * sizeof(int)));
+  HIP_ASSERT(hipMalloc(&deviceHitTriangles, rays.size() * sizeof(int)));
+  HIP_ASSERT(hipMalloc(&deviceIntersectionPoint, rays.size() * sizeof(Vec3)));
+  HIP_ASSERT(hipMalloc(&deviceDistanceResults, rays.size() * sizeof(float)));
+  HIP_ASSERT(hipMalloc(&deviceIdResults, rays.size() * sizeof(int)));
 
   t_begin_1 = std::chrono::steady_clock::now();
-  int blockSize = 256;
+  int blockSize = 512;
   int numBlocks = (rays.size() + blockSize - 1) / blockSize;
 
-  if (mode == 4) {
-    hipLaunchKernelGGL(raytraceKernel_Parallel004, dim3(numBlocks),
-                       dim3(blockSize), 0, 0, deviceRays, rays.size(),
-                       devicebvhNodes, deviceTriangles, deviceHitTriangles,
-                       deviceDistanceResults, deviceIntersectionPoint,
-                       deviceIdResults);
+  if (mode == 44) {
+    hipLaunchKernelGGL(raytraceKernel4, dim3(numBlocks), dim3(blockSize), 0, 0,
+                       deviceRays, rays.size(), devicebvhNodes, deviceTriangles,
+                       deviceHitTriangles, deviceDistanceResults,
+                       deviceIntersectionPoint, deviceIdResults);
+  }
+
+  else if (mode == 4) {
+
   } else if (mode == 5) {
     hipLaunchKernelGGL(raytraceKernel_Parallel005, dim3(numBlocks),
-                       dim3(blockSize), 0, 0, deviceRays, rays.size(),
-                       devicebvhNodes, deviceTriangles, deviceHitTriangles,
-                       deviceDistanceResults, deviceIntersectionPoint,
-                       deviceIdResults);
+                       dim3(blockSize), 0, 0, deviceRays, numRays,
+                       devicebvhNodes, nbNodes, deviceTriangles, nbTriangles,
+                       deviceHitTriangles, deviceDistanceResults,
+                       deviceIntersectionPoint, deviceIdResults);
   } else {
     hipLaunchKernelGGL(raytraceKernel, dim3(numBlocks), dim3(blockSize), 0, 0,
                        deviceRays, rays.size(), devicebvhNodes, deviceTriangles,
@@ -1811,19 +2100,19 @@ void Test001(int mode) {
 
   std::vector<int> hosthitTriangles(rays.size());
   HIP_ASSERT(hipMemcpy(hosthitTriangles.data(), deviceHitTriangles,
-            rays.size() * sizeof(int), hipMemcpyDeviceToHost));
+                       rays.size() * sizeof(int), hipMemcpyDeviceToHost));
 
   std::vector<Vec3> hostHipIntersectionPoint(rays.size());
   HIP_ASSERT(hipMemcpy(hostHipIntersectionPoint.data(), deviceIntersectionPoint,
-            rays.size() * sizeof(Vec3), hipMemcpyDeviceToHost));
+                       rays.size() * sizeof(Vec3), hipMemcpyDeviceToHost));
 
   std::vector<float> hostHipDistanceResults(rays.size());
   HIP_ASSERT(hipMemcpy(hostHipDistanceResults.data(), deviceDistanceResults,
-            rays.size() * sizeof(float), hipMemcpyDeviceToHost));
+                       rays.size() * sizeof(float), hipMemcpyDeviceToHost));
 
   std::vector<int> hostHipIdResults(rays.size());
-  HIP_ASSERT(hipMemcpy(hostHipIdResults.data(), deviceIdResults, rays.size() * sizeof(int),
-            hipMemcpyDeviceToHost));
+  HIP_ASSERT(hipMemcpy(hostHipIdResults.data(), deviceIdResults,
+                       rays.size() * sizeof(int), hipMemcpyDeviceToHost));
 
   for (int i = 0; i < rays.size(); ++i) {
     if (hostHipIdResults[i] != -1) {
@@ -1863,24 +2152,48 @@ void Test002(int mode) {
   std::vector<BVHNode> bvhNodes;
 
   loadTrianglesFromOBJ("Test.obj", triangles, 12321);
+  // loadTrianglesFromOBJ("Triangle2Cube.obj", triangles, 12321);
 
-  std::vector<Ray> rays(4);
+  int nbTriangles = triangles.size();
+  int nbNodes = 2 * nbTriangles - 1;
 
-  rays[0].origin = Vec3(0.0, 0.0, 1.0);
-  rays[0].direction = Vec3(0.0f, 0.0f, -1.0f);
+  /*
+    std::vector<Ray> rays(7);
+    rays[0].origin = Vec3(0.0, 0.0, 1.0);
+    rays[0].direction = Vec3(0.0f, 0.0f, -1.0f);
+    normalizeRayDirection(rays[0]);
+
+    rays[1].origin = Vec3(0.0, 0.0, 1.00001);
+    rays[1].direction = Vec3(0.0f, 0.0f, -1.0f);
+    normalizeRayDirection(rays[1]);
+
+    rays[2].origin = Vec3(0.0, 0.0, 11.0);
+    rays[2].direction = Vec3(0.0f, 0.0f, -1.0f);
+    normalizeRayDirection(rays[2]);
+
+    rays[3].origin = Vec3(0.5, 0.5, 21.0);
+    rays[3].direction = Vec3(0.0f, 0.0f, -1.0f);
+    normalizeRayDirection(rays[3]);
+
+    rays[4].origin = Vec3(1.0, 1.0, 1.0);
+    rays[4].direction = Vec3(0.0f, 0.0f, -1.0f);
+    normalizeRayDirection(rays[4]);
+
+    rays[5].origin = Vec3(1.0, 0.0, 1.0);
+    rays[5].direction = Vec3(1.0f, 0.0f,0.0f);
+    normalizeRayDirection(rays[5]);
+
+    rays[6].origin = Vec3(0.9, 0.9, 0.9);
+    rays[6].direction = Vec3(1.0f, 0.0f,0.0f);
+    normalizeRayDirection(rays[6]);
+    */
+
+  std::vector<Ray> rays(1);
+  rays[0].origin = Vec3(0.9, 0.9, 0.9);
+  rays[0].direction = Vec3(1.0f, 0.0f, 0.0f);
   normalizeRayDirection(rays[0]);
 
-  rays[1].origin = Vec3(0.0, 0.0, 1.00001);
-  rays[1].direction = Vec3(0.0f, 0.0f, -1.0f);
-  normalizeRayDirection(rays[1]);
-
-  rays[2].origin = Vec3(0.0, 0.0, 11.0);
-  rays[2].direction = Vec3(0.0f, 0.0f, -1.0f);
-  normalizeRayDirection(rays[2]);
-
-  rays[3].origin = Vec3(0.5, 0.5, 21.0);
-  rays[3].direction = Vec3(0.0f, 0.0f, -1.0f);
-  normalizeRayDirection(rays[3]);
+  int numRays = rays.size();
 
   Triangle *deviceTriangles;
   Ray *deviceRays;
@@ -1890,9 +2203,10 @@ void Test002(int mode) {
   float *deviceDistanceResults;
   int *deviceIdResults;
 
-  HIP_ASSERT( hipMalloc(&deviceTriangles, triangles.size() * sizeof(Triangle)));
+  HIP_ASSERT(hipMalloc(&deviceTriangles, triangles.size() * sizeof(Triangle)));
   HIP_ASSERT(hipMemcpy(deviceTriangles, triangles.data(),
-            triangles.size() * sizeof(Triangle), hipMemcpyHostToDevice));
+                       triangles.size() * sizeof(Triangle),
+                       hipMemcpyHostToDevice));
 
   bool isUnifiedMemory = false;
   bool isGPU = false;
@@ -1908,25 +2222,29 @@ void Test002(int mode) {
     t_end_0 = std::chrono::steady_clock::now();
     if (1 == 0)
       writeBVHNodes(bvhNodes);
-    HIP_ASSERT( hipMalloc(&devicebvhNodes, bvhNodes.size() * sizeof(BVHNode)));
+    HIP_ASSERT(hipMalloc(&devicebvhNodes, bvhNodes.size() * sizeof(BVHNode)));
     HIP_ASSERT(hipMemcpy(devicebvhNodes, bvhNodes.data(),
-              bvhNodes.size() * sizeof(BVHNode), hipMemcpyHostToDevice));
+                         bvhNodes.size() * sizeof(BVHNode),
+                         hipMemcpyHostToDevice));
   }
 
   if (isGPU) {
     int numTriangles = triangles.size();
-    HIP_ASSERT( hipMalloc(&devicebvhNodes, (2 * numTriangles - 1) * sizeof(BVHNode)));
+    HIP_ASSERT(
+        hipMalloc(&devicebvhNodes, (2 * numTriangles - 1) * sizeof(BVHNode)));
     t_begin_0 = std::chrono::steady_clock::now();
     // buildBVH_GPU_Version1(deviceTriangles, devicebvhNodes, numTriangles);
     if (mode == 2)
       buildBVH_GPU_Version2(deviceTriangles, devicebvhNodes, numTriangles);
     if (mode == 3)
       buildBVH_GPU_Version3(deviceTriangles, devicebvhNodes, numTriangles);
-    if (mode == 4)
-      buildBVH_GPU_Parallel(deviceTriangles, devicebvhNodes, numTriangles);
+    if (mode == 44)
+      buildBVH_GPU_Version4(deviceTriangles, devicebvhNodes, numTriangles);
+
     if (mode == 5)
       buildBVH_GPU_Parallel_Best_Axis(deviceTriangles, devicebvhNodes,
                                       numTriangles);
+    hipDeviceSynchronize();
     t_end_0 = std::chrono::steady_clock::now();
 
     // hipMemcpy(nodes, d_nodes, (2 * numTriangles - 1) * sizeof(BVHNode),
@@ -1955,31 +2273,35 @@ void Test002(int mode) {
   }
 
   std::cout << "[Ray Tracing]\n";
-  HIP_ASSERT( hipMalloc(&deviceRays, rays.size() * sizeof(Ray)));
+  HIP_ASSERT(hipMalloc(&deviceRays, rays.size() * sizeof(Ray)));
   HIP_ASSERT(hipMemcpy(deviceRays, rays.data(), rays.size() * sizeof(Ray),
-            hipMemcpyHostToDevice));
+                       hipMemcpyHostToDevice));
 
-  HIP_ASSERT( hipMalloc(&deviceHitTriangles, rays.size() * sizeof(int)));
-  HIP_ASSERT( hipMalloc(&deviceIntersectionPoint, rays.size() * sizeof(Vec3)));
-  HIP_ASSERT( hipMalloc(&deviceDistanceResults, rays.size() * sizeof(float)));
-  HIP_ASSERT( hipMalloc(&deviceIdResults, rays.size() * sizeof(int)));
+  HIP_ASSERT(hipMalloc(&deviceHitTriangles, rays.size() * sizeof(int)));
+  HIP_ASSERT(hipMalloc(&deviceIntersectionPoint, rays.size() * sizeof(Vec3)));
+  HIP_ASSERT(hipMalloc(&deviceDistanceResults, rays.size() * sizeof(float)));
+  HIP_ASSERT(hipMalloc(&deviceIdResults, rays.size() * sizeof(int)));
 
   t_begin_1 = std::chrono::steady_clock::now();
   int blockSize = 512;
   int numBlocks = (rays.size() + blockSize - 1) / blockSize;
 
-  if (mode == 4) {
-    hipLaunchKernelGGL(raytraceKernel_Parallel004, dim3(numBlocks),
-                       dim3(blockSize), 0, 0, deviceRays, rays.size(),
-                       devicebvhNodes, deviceTriangles, deviceHitTriangles,
-                       deviceDistanceResults, deviceIntersectionPoint,
-                       deviceIdResults);
+  if (mode == 44) {
+    hipLaunchKernelGGL(raytraceKernel4, dim3(numBlocks), dim3(blockSize), 0, 0,
+                       deviceRays, rays.size(), devicebvhNodes, deviceTriangles,
+                       deviceHitTriangles, deviceDistanceResults,
+                       deviceIntersectionPoint, deviceIdResults);
+  }
+
+  else if (mode == 4) {
+
   } else if (mode == 5) {
+
     hipLaunchKernelGGL(raytraceKernel_Parallel005, dim3(numBlocks),
-                       dim3(blockSize), 0, 0, deviceRays, rays.size(),
-                       devicebvhNodes, deviceTriangles, deviceHitTriangles,
-                       deviceDistanceResults, deviceIntersectionPoint,
-                       deviceIdResults);
+                       dim3(blockSize), 0, 0, deviceRays, numRays,
+                       devicebvhNodes, nbNodes, deviceTriangles, nbTriangles,
+                       deviceHitTriangles, deviceDistanceResults,
+                       deviceIntersectionPoint, deviceIdResults);
   } else {
     hipLaunchKernelGGL(raytraceKernel, dim3(numBlocks), dim3(blockSize), 0, 0,
                        deviceRays, rays.size(), devicebvhNodes, deviceTriangles,
@@ -1987,32 +2309,37 @@ void Test002(int mode) {
                        deviceIntersectionPoint, deviceIdResults);
   }
 
+  hipDeviceSynchronize();
 
   t_end_1 = std::chrono::steady_clock::now();
 
   std::vector<int> hosthitTriangles(rays.size());
   HIP_ASSERT(hipMemcpy(hosthitTriangles.data(), deviceHitTriangles,
-            rays.size() * sizeof(int), hipMemcpyDeviceToHost));
+                       rays.size() * sizeof(int), hipMemcpyDeviceToHost));
 
   std::vector<Vec3> hostHipIntersectionPoint(rays.size());
   HIP_ASSERT(hipMemcpy(hostHipIntersectionPoint.data(), deviceIntersectionPoint,
-            rays.size() * sizeof(Vec3), hipMemcpyDeviceToHost));
+                       rays.size() * sizeof(Vec3), hipMemcpyDeviceToHost));
 
   std::vector<float> hostHipDistanceResults(rays.size());
   HIP_ASSERT(hipMemcpy(hostHipDistanceResults.data(), deviceDistanceResults,
-            rays.size() * sizeof(float), hipMemcpyDeviceToHost));
+                       rays.size() * sizeof(float), hipMemcpyDeviceToHost));
 
   std::vector<int> hostHipIdResults(rays.size());
-  HIP_ASSERT(hipMemcpy(hostHipIdResults.data(), deviceIdResults, rays.size() * sizeof(int),
-            hipMemcpyDeviceToHost));
+  HIP_ASSERT(hipMemcpy(hostHipIdResults.data(), deviceIdResults,
+                       rays.size() * sizeof(int), hipMemcpyDeviceToHost));
 
   for (int i = 0; i < rays.size(); ++i) {
     if (hostHipIdResults[i] != -1) {
+      std::cout << " ray= <" << rays[i].origin.x << "," << rays[i].origin.y
+                << "," << rays[i].origin.z << ">";
+      std::cout << " dir= <" << rays[i].direction.x << ","
+                << rays[i].direction.y << "," << rays[i].direction.z << ">";
       std::cout << " dist (min)=" << hostHipDistanceResults[i];
       std::cout << " IntersectionPoint= <" << hostHipIntersectionPoint[i].x
                 << "," << hostHipIntersectionPoint[i].y << ","
                 << hostHipIntersectionPoint[i].z << "> ";
-      std::cout << " IdObject= " << hostHipIdResults[i] << "\n";
+      std::cout << "\n";
     }
   }
 
@@ -2036,31 +2363,29 @@ void Test002(int mode) {
 
 int main() {
 
-  if (1 == 1) {
+  if (1 == 0) {
     std::cout << "\n [INFO]: Test 0\n";
     Test001(0);
     std::cout << "\n [INFO]: Test 2\n";
     Test001(2);
     std::cout << "\n [INFO]: Test 3\n";
     Test001(3);
-    std::cout << "\n [INFO]: Test 4\n";
-    Test001(4);
     std::cout << "\n [INFO]: Test 5\n";
     Test001(5);
   }
 
-  std::cout << "********************************************************\n";
-
-  std::cout << "\n [INFO]: Test 0\n";
-  Test002(0);
-  std::cout << "\n [INFO]: Test 2\n";
-  Test002(2);
-  std::cout << "\n [INFO]: Test 3\n";
-  Test002(3);
-  std::cout << "\n [INFO]: Test 4\n";
-  Test002(4);
-  std::cout << "\n [INFO]: Test 5\n";
-  Test002(5);
+  if (1 == 1) {
+    std::cout << "\n [INFO]: Test 0\n";
+    Test002(0);
+    std::cout << "\n [INFO]: Test 2\n";
+    Test002(2);
+    std::cout << "\n [INFO]: Test 3\n";
+    Test002(3);
+    std::cout << "\n [INFO]: Test 5\n";
+    Test002(5);
+    std::cout << "\n [INFO]: Test 44\n";
+    Test002(44);
+  }
 
   return 0;
 }
